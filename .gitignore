@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Electron
+electron-app/dist/
+electron-app/out/
+electron-app/.vite/
+
+# Logs
+*.log
+logs/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Cookies (敏感信息)
+cookies.json
+*.cookies
+
+# Downloaded videos
+downloads/
+*.mp4
+*.m3u8
+*.ts
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

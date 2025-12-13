@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API 测试</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        button { padding: 10px 20px; margin: 10px 0; }
+        pre { background: #f0f0f0; padding: 10px; overflow: auto; }
+    </style>
+</head>
+<body>
+    <h1>知乎视频下载器 API 测试</h1>
+    <button onclick="testParse()">测试解析 API</button>
+    <pre id="result"></pre>
+    
+    <script>
+        async function testParse() {
+            const url = 'https://www.zhihu.com/xen/market/training/training-video/1973778517616523009/1973778517947865002?education_channel_code=ZHZN-cd8085beea05e6d';
+            const resultEl = document.getElementById('result');
+            resultEl.textContent = '正在请求...';
+            
+            try {
+                const response = await fetch('http://localhost:5124/api/parse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                
+                const data = await response.json();
+                resultEl.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                resultEl.textContent = '错误: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>
