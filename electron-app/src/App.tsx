@@ -119,29 +119,38 @@ function App() {
   };
 
   // 轮询下载进度
-  const updateProgress = useCallback(async () => {
-    const activeDownloads = downloads.filter(
-      d => d.progress.status !== 'Completed' && d.progress.status !== 'Failed'
-    );
-
-    for (const download of activeDownloads) {
-      try {
-        const progress = await api.getProgress(download.downloadId);
-        setDownloads(prev =>
-          prev.map(d =>
-            d.id === download.id ? { ...d, progress } : d
-          )
-        );
-      } catch {
-        // 忽略错误
-      }
-    }
-  }, [downloads]);
-
   useEffect(() => {
-    const interval = setInterval(updateProgress, 1000);
+    const interval = setInterval(async () => {
+      setDownloads(prev => {
+        const activeDownloads = prev.filter(
+          d => d.progress.status !== 'Completed' && d.progress.status !== 'Failed'
+        );
+
+        if (activeDownloads.length === 0) return prev;
+
+        // 并行获取所有进度
+        Promise.all(
+          activeDownloads.map(d => 
+            api.getProgress(d.downloadId).catch(() => null)
+          )
+        ).then(results => {
+          setDownloads(prevState =>
+            prevState.map((d, idx) => {
+              const activeIdx = activeDownloads.findIndex(ad => ad.id === d.id);
+              if (activeIdx !== -1 && results[activeIdx]) {
+                return { ...d, progress: results[activeIdx] };
+              }
+              return d;
+            })
+          );
+        });
+
+        return prev;
+      });
+    }, 1000);
+
     return () => clearInterval(interval);
-  }, [updateProgress]);
+  }, []);
 
   // 选择输出目录
   const handleSelectDirectory = async () => {
