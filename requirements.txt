@@ -14,9 +14,12 @@ fastapi>=0.104.0
 uvicorn>=0.24.0
 pydantic>=2.0.0
 
+# Whisper 语音转文字
+openai-whisper>=20231117
+
 # 可选：如果 browser-cookie3 有问题，可以使用 pycookiecheat
 # pycookiecheat>=0.5.0
 
 # 系统依赖 (需要通过 brew 安装):
-# ffmpeg - 用于下载和合并 M3U8 视频流
+# ffmpeg - 用于下载和合并 M3U8 视频流，以及提取音频
 # 安装命令: brew install ffmpeg

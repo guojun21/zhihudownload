@@ -11,10 +11,12 @@ import {
   Cookie,
   ChevronRight,
   Play,
-  ExternalLink
+  ExternalLink,
+  FileText,
+  Music
 } from 'lucide-react';
 import { api } from './api/zhihu';
-import type { VideoInfo, DownloadOption, DownloadItem } from './types';
+import type { VideoInfo, DownloadOption, DownloadItem, TranscribeItem } from './types';
 import './App.css';
 
 function App() {
@@ -23,6 +25,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+  const [transcribes, setTranscribes] = useState<TranscribeItem[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [outputPath, setOutputPath] = useState<string | null>(null);
@@ -121,31 +124,41 @@ function App() {
   // 轮询下载进度
   useEffect(() => {
     const interval = setInterval(async () => {
-      setDownloads(prev => {
-        const activeDownloads = prev.filter(
+      // 使用 ref 获取当前的 downloads 状态，避免闭包问题
+      setDownloads(currentDownloads => {
+        const activeDownloads = currentDownloads.filter(
           d => d.progress.status !== 'Completed' && d.progress.status !== 'Failed'
         );
 
-        if (activeDownloads.length === 0) return prev;
+        if (activeDownloads.length === 0) return currentDownloads;
 
-        // 并行获取所有进度
+        // 并行获取所有活动下载的进度
         Promise.all(
           activeDownloads.map(d => 
             api.getProgress(d.downloadId).catch(() => null)
           )
         ).then(results => {
-          setDownloads(prevState =>
-            prevState.map((d, idx) => {
-              const activeIdx = activeDownloads.findIndex(ad => ad.id === d.id);
-              if (activeIdx !== -1 && results[activeIdx]) {
-                return { ...d, progress: results[activeIdx] };
+          // 构建 downloadId -> progress 的映射
+          const progressMap = new Map<string, typeof results[0]>();
+          activeDownloads.forEach((d, idx) => {
+            if (results[idx]) {
+              progressMap.set(d.downloadId, results[idx]);
+            }
+          });
+
+          // 更新状态
+          setDownloads(prevDownloads =>
+            prevDownloads.map(d => {
+              const newProgress = progressMap.get(d.downloadId);
+              if (newProgress) {
+                return { ...d, progress: newProgress };
               }
               return d;
             })
           );
         });
 
-        return prev;
+        return currentDownloads;
       });
     }, 1000);
 
@@ -164,6 +177,68 @@ function App() {
   const handleOpenFile = (filePath: string) => {
     window.electronAPI?.openFile(filePath);
   };
+
+  // 开始转录
+  const handleTranscribe = async (download: DownloadItem) => {
+    if (!download.progress.file_path) return;
+
+    try {
+      const taskId = await api.startTranscribe(download.progress.file_path);
+      
+      const newTranscribe: TranscribeItem = {
+        id: `transcribe-${Date.now()}`,
+        taskId,
+        videoPath: download.progress.file_path,
+        title: download.title,
+        progress: { status: 'pending', percentage: 0 },
+      };
+
+      setTranscribes(prev => [newTranscribe, ...prev]);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : '转录失败';
+      setError(errorMessage);
+    }
+  };
+
+  // 轮询转录进度
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      setTranscribes(currentTranscribes => {
+        const activeTranscribes = currentTranscribes.filter(
+          t => t.progress.status !== 'completed' && t.progress.status !== 'failed'
+        );
+
+        if (activeTranscribes.length === 0) return currentTranscribes;
+
+        Promise.all(
+          activeTranscribes.map(t =>
+            api.getTranscribeProgress(t.taskId).catch(() => null)
+          )
+        ).then(results => {
+          const progressMap = new Map<string, typeof results[0]>();
+          activeTranscribes.forEach((t, idx) => {
+            if (results[idx]) {
+              progressMap.set(t.taskId, results[idx]);
+            }
+          });
+
+          setTranscribes(prevTranscribes =>
+            prevTranscribes.map(t => {
+              const newProgress = progressMap.get(t.taskId);
+              if (newProgress) {
+                return { ...t, progress: newProgress };
+              }
+              return t;
+            })
+          );
+        });
+
+        return currentTranscribes;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // 格式化时长
   const formatDuration = (ms: number) => {
@@ -324,12 +399,91 @@ function App() {
                     </span>
                   </div>
                   {download.progress.status === 'Completed' && download.progress.file_path && (
-                    <button 
-                      className="open-btn"
-                      onClick={() => handleOpenFile(download.progress.file_path!)}
-                    >
-                      <ExternalLink size={16} />
-                    </button>
+                    <div className="download-actions">
+                      <button 
+                        className="transcribe-btn"
+                        onClick={() => handleTranscribe(download)}
+                        title="转录为文字"
+                      >
+                        <FileText size={16} />
+                        <span>转录</span>
+                      </button>
+                      <button 
+                        className="open-btn"
+                        onClick={() => handleOpenFile(download.progress.file_path!)}
+                        title="打开文件"
+                      >
+                        <ExternalLink size={16} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* 转录列表 */}
+        {transcribes.length > 0 && (
+          <section className="transcribes-section">
+            <h2>
+              <FileText size={18} />
+              转录任务
+            </h2>
+            <div className="transcribes-list">
+              {transcribes.map(transcribe => (
+                <div key={transcribe.id} className="transcribe-item">
+                  <div className="transcribe-icon">
+                    {transcribe.progress.status === 'completed' ? (
+                      <Check size={20} />
+                    ) : transcribe.progress.status === 'failed' ? (
+                      <AlertCircle size={20} />
+                    ) : (
+                      <Loader2 className="spin" size={20} />
+                    )}
+                  </div>
+                  <div className="transcribe-info">
+                    <h4>{transcribe.title}</h4>
+                    <p className="transcribe-stage">
+                      {transcribe.progress.stage || '准备中...'}
+                    </p>
+                    {transcribe.progress.status !== 'completed' && transcribe.progress.status !== 'failed' && (
+                      <div className="progress-bar transcribe-progress">
+                        <div 
+                          className="progress-fill"
+                          style={{ width: `${transcribe.progress.percentage}%` }}
+                        />
+                      </div>
+                    )}
+                    <span className={`status status-${transcribe.progress.status}`}>
+                      {transcribe.progress.status === 'completed' 
+                        ? '转录完成' 
+                        : transcribe.progress.status === 'failed'
+                        ? transcribe.progress.error || '转录失败'
+                        : `${transcribe.progress.percentage}%`}
+                    </span>
+                  </div>
+                  {transcribe.progress.status === 'completed' && (
+                    <div className="transcribe-actions">
+                      {transcribe.progress.mp3_path && (
+                        <button 
+                          className="action-btn mp3-btn"
+                          onClick={() => handleOpenFile(transcribe.progress.mp3_path!)}
+                          title="打开音频文件"
+                        >
+                          <Music size={16} />
+                        </button>
+                      )}
+                      {transcribe.progress.txt_path && (
+                        <button 
+                          className="action-btn txt-btn"
+                          onClick={() => handleOpenFile(transcribe.progress.txt_path!)}
+                          title="打开文字文件"
+                        >
+                          <FileText size={16} />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}

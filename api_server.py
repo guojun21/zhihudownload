@@ -8,6 +8,7 @@
 import os
 import uuid
 import asyncio
+import threading
 from typing import Optional, Dict, List
 from pathlib import Path
 from dataclasses import dataclass, asdict
@@ -18,6 +19,7 @@ from pydantic import BaseModel
 
 # 导入下载器核心功能
 from zhihu_downloader import ZhihuVideoDownloader, VideoInfo, DownloadOption
+from transcribe import VideoTranscriber, TranscribeResult
 
 app = FastAPI(title="知乎视频下载器 API", version="1.0.0")
 
@@ -33,8 +35,14 @@ app.add_middleware(
 # 全局下载器实例
 downloader: Optional[ZhihuVideoDownloader] = None
 
+# 全局转录器实例
+transcriber: Optional[VideoTranscriber] = None
+
 # 下载任务存储
 downloads: Dict[str, dict] = {}
+
+# 转录任务存储
+transcriptions: Dict[str, dict] = {}
 
 
 class ParseRequest(BaseModel):
@@ -68,6 +76,24 @@ class ProgressResponse(BaseModel):
 
 class CookiesRequest(BaseModel):
     cookies: List[dict]
+
+
+class TranscribeRequest(BaseModel):
+    video_path: str
+    language: str = "zh"
+
+
+class TranscribeResponse(BaseModel):
+    task_id: str
+
+
+class TranscribeProgressResponse(BaseModel):
+    status: str  # pending, loading_model, extracting_audio, transcribing, completed, failed
+    percentage: int
+    stage: Optional[str] = None
+    mp3_path: Optional[str] = None
+    txt_path: Optional[str] = None
+    error: Optional[str] = None
 
 
 @app.on_event("startup")
@@ -262,6 +288,125 @@ async def check_cookies():
     return {
         "authenticated": has_auth,
         "cookies": cookie_names
+    }
+
+
+@app.post("/api/transcribe", response_model=TranscribeResponse)
+async def start_transcribe(request: TranscribeRequest, background_tasks: BackgroundTasks):
+    """开始转录视频"""
+    global transcriber
+    
+    # 检查视频文件是否存在
+    video_path = Path(request.video_path)
+    if not video_path.exists():
+        raise HTTPException(status_code=400, detail=f"视频文件不存在: {request.video_path}")
+    
+    task_id = str(uuid.uuid4())
+    
+    # 初始化转录状态
+    transcriptions[task_id] = {
+        "status": "pending",
+        "percentage": 0,
+        "stage": None,
+        "mp3_path": None,
+        "txt_path": None,
+        "error": None
+    }
+    
+    # 在后台执行转录
+    background_tasks.add_task(
+        do_transcribe,
+        task_id,
+        request.video_path,
+        request.language
+    )
+    
+    return TranscribeResponse(task_id=task_id)
+
+
+def do_transcribe(task_id: str, video_path: str, language: str):
+    """在后台线程执行转录任务"""
+    global transcriber
+    
+    try:
+        print(f"[转录任务 {task_id}] 开始处理: {video_path}")
+        
+        # 懒加载转录器
+        if transcriber is None:
+            transcriptions[task_id]["status"] = "loading_model"
+            transcriptions[task_id]["stage"] = "正在加载模型..."
+            transcriptions[task_id]["percentage"] = 5
+            print(f"[转录任务 {task_id}] 初始化转录器...")
+            transcriber = VideoTranscriber(model_size="medium")
+        
+        def progress_callback(stage: str, percentage: int):
+            """进度回调"""
+            stage_names = {
+                "loading_model": "正在加载模型...",
+                "model_loaded": "模型已加载",
+                "extracting_audio": "正在提取音频...",
+                "audio_extracted": "音频已提取",
+                "transcribing": "正在转录文字...",
+                "transcription_done": "转录完成",
+                "completed": "处理完成"
+            }
+            
+            transcriptions[task_id]["status"] = stage
+            transcriptions[task_id]["stage"] = stage_names.get(stage, stage)
+            transcriptions[task_id]["percentage"] = percentage
+            print(f"[转录任务 {task_id}] 进度: {percentage}% - {stage}")
+        
+        # 执行转录
+        result = transcriber.process_video(
+            video_path,
+            language=language,
+            progress_callback=progress_callback
+        )
+        
+        # 更新完成状态
+        transcriptions[task_id]["status"] = "completed"
+        transcriptions[task_id]["percentage"] = 100
+        transcriptions[task_id]["stage"] = "处理完成"
+        transcriptions[task_id]["mp3_path"] = result.mp3_path
+        transcriptions[task_id]["txt_path"] = result.txt_path
+        print(f"[转录任务 {task_id}] 完成: MP3={result.mp3_path}, TXT={result.txt_path}")
+        
+    except Exception as e:
+        print(f"[转录任务 {task_id}] 失败: {e}")
+        import traceback
+        traceback.print_exc()
+        transcriptions[task_id]["status"] = "failed"
+        transcriptions[task_id]["error"] = str(e)
+
+
+@app.get("/api/transcribe/{task_id}", response_model=TranscribeProgressResponse)
+async def get_transcribe_progress(task_id: str):
+    """获取转录进度"""
+    if task_id not in transcriptions:
+        raise HTTPException(status_code=404, detail="转录任务不存在")
+    
+    return TranscribeProgressResponse(**transcriptions[task_id])
+
+
+@app.get("/api/transcribe/check-model")
+async def check_model():
+    """检查 Whisper 模型是否可用"""
+    from pathlib import Path
+    
+    buzz_model_path = Path.home() / "Library/Caches/Buzz/models/whisper"
+    
+    models = {}
+    for size in ["small", "medium"]:
+        model_file = buzz_model_path / f"{size}.pt"
+        models[size] = {
+            "available": model_file.exists(),
+            "path": str(model_file),
+            "size_mb": round(model_file.stat().st_size / 1024 / 1024, 1) if model_file.exists() else 0
+        }
+    
+    return {
+        "model_dir": str(buzz_model_path),
+        "models": models
     }
 
 
