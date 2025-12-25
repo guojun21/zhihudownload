@@ -1,0 +1,35 @@
+# Build artifacts
+.build/
+build/
+*.o
+*.a
+*.dylib
+*.so
+*.swiftmodule
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.pbxuser
+*.perspective
+*.perspectivev3
+xcuserdata/
+*.xcworkspace
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*~
+
+# IDE
+.vscode/
+.idea/
+*.swiftpm
+
+# Testing
+.swiftpm/xcode
+
