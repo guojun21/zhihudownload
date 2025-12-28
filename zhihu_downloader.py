@@ -535,7 +535,8 @@ class ZhihuVideoDownloader:
                                 progress_callback(progress)
                                 last_progress = progress
                             
-                            print(f"\r下载中... {progress}%", end="", flush=True)
+                            # 使用换行输出，便于 Go 程序按行解析进度
+                            print(f"下载进度: {progress}%", flush=True)
             
             print()  # 换行
             
@@ -806,7 +807,8 @@ def main():
     
     # 下载视频
     def progress_callback(progress):
-        print(f"\r下载进度: {progress:.1f}%", end="", flush=True)
+        # 使用换行输出，便于 Go 程序按行解析进度
+        print(f"下载进度: {progress:.1f}%", flush=True)
     
     result = downloader.download_video(
         args.url,

@@ -274,11 +274,24 @@ func transcribeVideo(taskID, videoPath, language string) {
 	mp3Path := strings.TrimSuffix(videoPath, filepath.Ext(videoPath)) + ".mp3"
 
 	// 用 ffmpeg 从视频提取音频
-	cmd := exec.Command("ffmpeg", "-y", "-i", videoPath, "-q:a", "9", "-n", mp3Path)
-	if err := cmd.Run(); err != nil {
+	cmd := exec.Command("ffmpeg", "-y", "-i", videoPath, "-q:a", "9", mp3Path)
+	
+	output, err := cmd.CombinedOutput()
+	if err != nil {
 		mu.Lock()
 		task.Status = "failed"
-		errMsg := fmt.Sprintf("提取音频失败: %v", err)
+		errMsg := fmt.Sprintf("提取音频失败: %v\n输出: %s", err, string(output))
+		task.Error = &errMsg
+		mu.Unlock()
+		fmt.Printf("[%s] 错误: %s\n", taskID, errMsg)
+		return
+	}
+	
+	// 检查 MP3 文件是否真的存在
+	if _, err := os.Stat(mp3Path); err != nil {
+		mu.Lock()
+		task.Status = "failed"
+		errMsg := fmt.Sprintf("MP3 文件未创建: %v", err)
 		task.Error = &errMsg
 		mu.Unlock()
 		fmt.Printf("[%s] 错误: %s\n", taskID, errMsg)
@@ -298,14 +311,12 @@ func transcribeVideo(taskID, videoPath, language string) {
 	// 输出目录
 	outputDir := filepath.Dir(videoPath)
 	
-	// 调用 whisper CLI
-	whisperCmd := exec.Command("whisper", mp3Path, 
-		"--output_format", "txt", 
-		"--output_dir", outputDir, 
-		"--language", language,
-		"--model", "base")
-
-	output, err := whisperCmd.CombinedOutput()
+	// 调用 whisper CLI（使用完整环境）
+	whisperCmd := exec.Command("bash", "-c", 
+		fmt.Sprintf("export PATH=/opt/homebrew/bin:$PATH && /opt/homebrew/bin/whisper %q --output_format txt --output_dir %q --language %s --model base 2>&1",
+			mp3Path, outputDir, language))
+	
+	output, err = whisperCmd.CombinedOutput()
 	
 	if err != nil {
 		mu.Lock()
@@ -313,7 +324,8 @@ func transcribeVideo(taskID, videoPath, language string) {
 		errMsg := fmt.Sprintf("Whisper 转录失败: %v\n输出: %s", err, string(output))
 		task.Error = &errMsg
 		mu.Unlock()
-		fmt.Printf("[%s] 错误: %s\n", taskID, errMsg)
+		fmt.Printf("[%s] 错误详情: %s\n", taskID, errMsg)
+		fmt.Printf("[%s] stderr/stdout: %s\n", taskID, string(output))
 		return
 	}
 
